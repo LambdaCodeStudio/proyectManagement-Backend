@@ -76,6 +76,7 @@ app.use((req, res, next) => {
 
 // Rutas
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/cleaning', require('./routes/cleaning'));
 
 const PORT = process.env.PORT || 4000;
 

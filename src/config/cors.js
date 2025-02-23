@@ -1,6 +1,6 @@
 const corsOptions = {
     origin: process.env.CORS_ORIGIN.split(','),
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
     maxAge: 600, // 10 minutos
