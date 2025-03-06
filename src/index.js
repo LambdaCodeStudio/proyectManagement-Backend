@@ -18,7 +18,7 @@ const {
   cacheControl,
   logSuspiciousActivity
 } = require('./middleware/security');
-const corsOptions = require('./config/cors');
+const { corsOptions, corsPublicOptions } = require('./config/cors');
 const MongoStore = require('connect-mongo');
 
 // Inicializar Express
@@ -186,6 +186,8 @@ app.get('/api/csrf-token', (req, res) => {
 
 // Rutas API
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/cliente', require('./routes/clienteRoutes'));
+app.use('/api/cobrosExtraOrdinarios', require('./routes/cobrosExtraOrdinariosRoutes'));
 
 // Middleware para errores 404
 app.use((req, res) => {

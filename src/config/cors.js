@@ -2,7 +2,7 @@ const corsOptions = {
   origin: (origin, callback) => {
     const allowedOrigins = process.env.CORS_ORIGIN.split(',');
     
-    // Permitir solicitudes sin origen (como aplicaciones móviles o herramientas API) en desarrollo
+    
     if (!origin && process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
@@ -29,5 +29,8 @@ const corsOptions = {
   preflightContinue: false,
   optionsSuccessStatus: 204
 };
-
-module.exports = corsOptions;
+const corsPublicOptions = {
+  ...corsOptions,
+  origin: '*', // Permite todos los orígenes, es para que siertos endpoints sean públicos
+};
+module.exports = corsOptions, corsPublicOptions;
