@@ -1,224 +1,235 @@
-const Cliente = require('../models/clienteSchema');
-const Pago = require('../models/pagoSchema');
-const { PreApproval } = require('mercadopago');
-const mercadopago = require('../config/mercadopago');
+const Suscripcion = require('../models/suscripcion');
+const Usuario = require('../models/usuario'); // Suponiendo que tienes un modelo Usuario
+const mercadopago = require('mercadopago');
+const { logError } = require('../utils/logger'); // Suponiendo que tienes un logger
 
-// Crear una suscripción para un cliente con plan específico
-const crearSuscripcion = async (req, res) => {
+// Configurar Mercado Pago con las credenciales de tu .env
+mercadopago.configure({
+  access_token: process.env.MP_ACCESS_TOKEN
+});
+
+/**
+ * Crear una nueva suscripción sin plan asociado (con pago pendiente)
+ */
+exports.crearSuscripcion = async (req, res) => {
   try {
-    const { tipoPlan } = req.body;
-    
-    if (!tipoPlan) {
-      return res.status(400).json({ mensaje: 'Debe especificar el tipo de plan' });
+    const { usuarioId } = req.params;
+    const { email } = req.body;
+
+    if (!usuarioId || !email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Se requiere el ID del usuario y el email'
+      });
     }
 
-    const cliente = await Cliente.findById(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado' });
-    }
-
-    // Verificar que el plan seleccionado exista en los planes disponibles del cliente
-    const planSeleccionado = cliente.planesDisponibles.find(plan => plan.tipo === tipoPlan);
-    if (!planSeleccionado) {
-      return res.status(400).json({ mensaje: `El plan "${tipoPlan}" no está disponible para este cliente` });
+    // Verificar que el usuario existe
+    const usuario = await Usuario.findById(usuarioId);
+    if (!usuario) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Usuario no encontrado'
+      });
     }
 
     // Crear suscripción en MercadoPago
-    const suscripcion = await new PreApproval(mercadopago).create({
-      body: {
-        back_url: process.env.APP_URL,
-        reason: `Suscripción ${tipoPlan} - ${cliente.programaAdquirido}`,
-        auto_recurring: {
-          frequency: 1,
-          frequency_type: "months",
-          transaction_amount: planSeleccionado.precio,
-          currency_id: "ARS",
-        },
-        payer_email: cliente.email,
-        status: "pending",
-      },
-    });
-
-    // Actualizar el cliente con la información de la suscripción y el plan seleccionado
-    cliente.suscripcionId = suscripcion.id;
-    cliente.estado = 'activo';
-    cliente.estadoPagoActual = 'pendiente';
-    cliente.fechaProximoPago = new Date(new Date().setMonth(new Date().getMonth() + 1));
-    cliente.planActual = {
-      tipo: planSeleccionado.tipo,
-      precio: planSeleccionado.precio,
-      fechaActivacion: new Date()
-    };
-    await cliente.save();
-
-    res.status(200).json({
-      mensaje: 'Suscripción creada correctamente',
-      urlPago: suscripcion.init_point,
-      suscripcionId: suscripcion.id,
-      plan: cliente.planActual
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Cancelar suscripción
-const cancelarSuscripcion = async (req, res) => {
-  try {
-    const cliente = await Cliente.findById(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado' });
-    }
-
-    if (!cliente.suscripcionId) {
-      return res.status(400).json({ mensaje: 'El cliente no tiene una suscripción activa' });
-    }
-
-    // Cancelar suscripción en MercadoPago
-    await new PreApproval(mercadopago).update({
-      id: cliente.suscripcionId,
-      status: "cancelled",
-    });
-
-    // Actualizar estado del cliente
-    cliente.estado = 'inactivo';
-    await cliente.save();
-
-    res.status(200).json({ mensaje: 'Suscripción cancelada correctamente' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Actualizar suscripción (cambio de plan o precio)
-const actualizarSuscripcion = async (req, res) => {
-  try {
-    const { tipoPlan, nuevoPrecio } = req.body;
-    
-    if (!tipoPlan && !nuevoPrecio) {
-      return res.status(400).json({ mensaje: 'Debe proporcionar un nuevo plan o un nuevo precio' });
-    }
-
-    const cliente = await Cliente.findById(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado' });
-    }
-
-    if (!cliente.suscripcionId) {
-      return res.status(400).json({ mensaje: 'El cliente no tiene una suscripción activa' });
-    }
-
-    let precioActualizado;
-
-    // Si se especifica un nuevo plan, verificar que esté disponible
-    if (tipoPlan) {
-      const nuevoPlan = cliente.planesDisponibles.find(plan => plan.tipo === tipoPlan);
-      if (!nuevoPlan) {
-        return res.status(400).json({ mensaje: `El plan "${tipoPlan}" no está disponible para este cliente` });
-      }
-      
-      // Actualizar al nuevo plan
-      cliente.planActual = {
-        tipo: nuevoPlan.tipo,
-        precio: nuevoPrecio || nuevoPlan.precio,
-        fechaActivacion: new Date()
-      };
-      
-      precioActualizado = cliente.planActual.precio;
-    } else if (nuevoPrecio) {
-      // Solo actualizar el precio del plan actual
-      cliente.planActual.precio = nuevoPrecio;
-      precioActualizado = nuevoPrecio;
-    }
-
-    // Actualizar suscripción en MercadoPago
-    await new PreApproval(mercadopago).update({
-      id: cliente.suscripcionId,
+    const preapprovalData = {
+      back_url: process.env.APP_URL,
+      reason: "Suscripción mensual",
       auto_recurring: {
-        transaction_amount: precioActualizado
-      }
+        frequency: 1,
+        frequency_type: "months",
+        transaction_amount: 100, // Ajusta el monto según tus necesidades
+        currency_id: "ARS"
+      },
+      payer_email: email,
+      status: "pending"
+    };
+
+    const response = await mercadopago.preapproval.create(preapprovalData);
+
+    // Guardar la suscripción en nuestra base de datos
+    const suscripcion = new Suscripcion({
+      usuario: usuarioId,
+      mercadopagoId: response.body.id,
+      estado: 'pending',
+      monto: preapprovalData.auto_recurring.transaction_amount,
+      moneda: preapprovalData.auto_recurring.currency_id,
+      frecuencia: preapprovalData.auto_recurring.frequency,
+      tipoFrecuencia: preapprovalData.auto_recurring.frequency_type
     });
 
-    await cliente.save();
+    await suscripcion.save();
 
-    res.status(200).json({ 
-      mensaje: 'Suscripción actualizada correctamente',
-      planActual: cliente.planActual 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Consultar estado de suscripción
-const consultarEstadoSuscripcion = async (req, res) => {
-  try {
-    const cliente = await Cliente.findById(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado' });
-    }
-
-    if (!cliente.suscripcionId) {
-      return res.status(400).json({ mensaje: 'El cliente no tiene una suscripción registrada' });
-    }
-
-    // Consultar estado en MercadoPago
-    const suscripcion = await new PreApproval(mercadopago).get({ id: cliente.suscripcionId });
-
-    res.status(200).json({
-      clienteId: cliente._id,
-      nombre: cliente.nombre,
-      email: cliente.email,
-      programa: cliente.programaAdquirido,
-      estadoInterno: cliente.estado,
-      estadoPagoActual: cliente.estadoPagoActual,
-      fechaProximoPago: cliente.fechaProximoPago,
-      fechaUltimoPago: cliente.fechaUltimoPago,
-      planActual: cliente.planActual,
-      suscripcion: {
-        id: suscripcion.id,
-        estado: suscripcion.status,
-        montoRecurrente: suscripcion.auto_recurring.transaction_amount,
-        frecuencia: `${suscripcion.auto_recurring.frequency} ${suscripcion.auto_recurring.frequency_type}`
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        id: suscripcion._id,
+        init_point: response.body.init_point
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logError('Error al crear suscripción:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al crear la suscripción',
+      error: process.env.NODE_ENV === 'production' ? null : error.message
+    });
   }
 };
 
-// Reactivar suscripción pausada
-const reactivarSuscripcion = async (req, res) => {
+/**
+ * Obtener los detalles de una suscripción
+ */
+exports.obtenerSuscripcion = async (req, res) => {
   try {
-    const cliente = await Cliente.findById(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({ mensaje: 'Cliente no encontrado' });
+    const { id } = req.params;
+
+    const suscripcion = await Suscripcion.findById(id);
+    
+    if (!suscripcion) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Suscripción no encontrada'
+      });
     }
 
-    if (cliente.estado !== 'suspendido') {
-      return res.status(400).json({ mensaje: 'La suscripción no está suspendida' });
+    return res.status(200).json({
+      status: 'success',
+      data: suscripcion
+    });
+  } catch (error) {
+    logError('Error al obtener suscripción:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al obtener la suscripción',
+      error: process.env.NODE_ENV === 'production' ? null : error.message
+    });
+  }
+};
+
+/**
+ * Obtener todas las suscripciones de un usuario
+ */
+exports.obtenerSuscripcionesUsuario = async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+
+    const suscripciones = await Suscripcion.find({ usuario: usuarioId });
+
+    return res.status(200).json({
+      status: 'success',
+      data: suscripciones
+    });
+  } catch (error) {
+    logError('Error al obtener suscripciones del usuario:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al obtener las suscripciones del usuario',
+      error: process.env.NODE_ENV === 'production' ? null : error.message
+    });
+  }
+};
+
+/**
+ * Cancelar una suscripción
+ */
+exports.cancelarSuscripcion = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Buscar la suscripción en nuestra base de datos
+    const suscripcion = await Suscripcion.findById(id);
+    
+    if (!suscripcion) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Suscripción no encontrada'
+      });
     }
 
-    // Reactivar en MercadoPago
-    await new PreApproval(mercadopago).update({
-      id: cliente.suscripcionId,
-      status: "authorized",
+    // Cancelar la suscripción en Mercado Pago
+    await mercadopago.preapproval.update({
+      id: suscripcion.mercadopagoId,
+      status: "cancelled"
     });
 
-    // Actualizar estado del cliente
-    cliente.estado = 'activo';
-    await cliente.save();
+    // Actualizar el estado en nuestra base de datos
+    suscripcion.estado = 'cancelled';
+    suscripcion.activa = false;
+    suscripcion.ultimaActualizacion = Date.now();
+    await suscripcion.save();
 
-    res.status(200).json({ mensaje: 'Suscripción reactivada correctamente' });
+    return res.status(200).json({
+      status: 'success',
+      message: 'Suscripción cancelada correctamente'
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logError('Error al cancelar suscripción:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al cancelar la suscripción',
+      error: process.env.NODE_ENV === 'production' ? null : error.message
+    });
   }
 };
 
-module.exports = {
-  crearSuscripcion,
-  cancelarSuscripcion,
-  actualizarSuscripcion,
-  consultarEstadoSuscripcion,
-  reactivarSuscripcion
+/**
+ * Verificar si un usuario tiene una suscripción activa
+ */
+exports.verificarSuscripcion = async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+
+    const suscripcion = await Suscripcion.findOne({ 
+      usuario: usuarioId,
+      activa: true,
+      estado: 'authorized'
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        tieneSuscripcion: !!suscripcion,
+        suscripcion: suscripcion || null
+      }
+    });
+  } catch (error) {
+    logError('Error al verificar suscripción:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al verificar la suscripción',
+      error: process.env.NODE_ENV === 'production' ? null : error.message
+    });
+  }
+};
+
+/**
+ * Actualiza una suscripción con información de Mercado Pago
+ * Esta función se utiliza internamente desde el webhook
+ */
+exports.actualizarSuscripcion = async (mercadopagoId, estado) => {
+  try {
+    const suscripcion = await Suscripcion.findOne({ mercadopagoId });
+    
+    if (!suscripcion) {
+      logError(`Suscripción con ID de MercadoPago ${mercadopagoId} no encontrada`);
+      return false;
+    }
+
+    suscripcion.estado = estado;
+    suscripcion.activa = estado === 'authorized';
+    
+    if (estado === 'authorized' && !suscripcion.fechaInicio) {
+      suscripcion.fechaInicio = Date.now();
+    }
+    
+    suscripcion.ultimaActualizacion = Date.now();
+    await suscripcion.save();
+
+    return true;
+  } catch (error) {
+    logError('Error al actualizar suscripción:', error);
+    return false;
+  }
 };
