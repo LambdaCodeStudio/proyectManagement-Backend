@@ -25,6 +25,9 @@
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.10.1",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.10.0",
+    "react-router-dom": "^7.3.0",
     "toobusy-js": "^0.5.1"
   },
   "devDependencies": {

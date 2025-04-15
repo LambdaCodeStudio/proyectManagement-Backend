@@ -6,6 +6,8 @@ const connectDB = require('./config/db');
 const mongoSanitize = require('express-mongo-sanitize');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 const { 
@@ -99,7 +101,7 @@ app.use(session({
     mongoUrl: process.env.MONGODB_URI,
     ttl: 24 * 60 * 60, // 1 día
     crypto: {
-      secret: process.env.SESSION_CRYPTO_SECRET
+      secret: process.env.SESSION_SECRET // Usa el mismo secret para simplificar
     },
     autoRemove: 'interval',
     autoRemoveInterval: 60, // Limpiar sesiones expiradas cada 60 minutos
@@ -113,11 +115,8 @@ app.use(session({
   }
 }));
 
-// Generar y proporcionar token CSRF
+// Generar y proporcionar token CSRF - esto se aplica a todas las respuestas
 app.use(generateCsrfToken);
-
-// CSRF Protection - después de inicializar session
-app.use(csrfProtection);
 
 // Rate Limiting - diferente por rutas
 const authLimiter = rateLimit({
@@ -168,6 +167,8 @@ app.use((req, res, next) => {
   next();
 });
 
+// ============= RUTAS PÚBLICAS (sin protección CSRF) =============
+
 // Endpoint para verificar estado de salud del servicio
 app.get('/api/health', (req, res) => {
   res.status(200).json({
@@ -179,15 +180,21 @@ app.get('/api/health', (req, res) => {
 
 // Endpoint para obtener token CSRF (útil para SPA)
 app.get('/api/csrf-token', (req, res) => {
+  console.log('Token CSRF solicitado:', req.session.csrfToken);
   res.json({ 
     csrfToken: req.session.csrfToken 
   });
 });
 
-// Rutas API
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/cliente', require('./routes/clienteRoutes'));
-app.use('/api/cobrosExtraOrdinarios', require('./routes/cobrosExtraOrdinariosRoutes'));
+// ============= RUTAS PROTEGIDAS (con CSRF) =============
+
+// Rutas API - Cada ruta aplica csrfProtection específicamente
+app.use('/api/auth', require('./routes/auth'));  // No aplicamos CSRF a auth para permitir login/register
+app.use('/api/cliente', csrfProtection, require('./routes/clienteRoutes'));
+app.use('/api/cobrosExtraOrdinarios', csrfProtection, require('./routes/cobrosExtraOrdinariosRoutes'));
+app.use('/api/pagos', csrfProtection, require('./routes/pagosRoutes'));
+app.use('/api/proyectos', require('./routes/proyectoRoutes'));
+app.use('/api/facturas', require('./routes/facturaRoutes'));
 
 // Middleware para errores 404
 app.use((req, res) => {
@@ -260,3 +267,8 @@ connectDB()
     console.error('Error al iniciar servidor:', err);
     process.exit(1);
   });
+
+if (process.env.NODE_ENV === 'production') {
+  console.log('Iniciando tareas programadas...');
+  require('./tasks/cronJobs');
+}

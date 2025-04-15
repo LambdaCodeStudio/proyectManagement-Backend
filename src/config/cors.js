@@ -17,7 +17,9 @@ const corsOptions = {
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
-    'X-Requested-With'
+    'X-Requested-With',
+    'X-Client-ID',
+    'X-CSRF-Token'   
   ],
   exposedHeaders: [
     'Content-Range', 
@@ -29,8 +31,10 @@ const corsOptions = {
   preflightContinue: false,
   optionsSuccessStatus: 204
 };
+
 const corsPublicOptions = {
   ...corsOptions,
   origin: '*', // Permite todos los orígenes, es para que siertos endpoints sean públicos
 };
-module.exports = corsOptions, corsPublicOptions;
+
+module.exports = { corsOptions, corsPublicOptions };
