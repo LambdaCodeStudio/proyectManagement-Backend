@@ -1,4 +1,4 @@
-const Pago = require('../models/pagosSchema');
+const Pago = require('../models/pagoSchema.js');
 const Cliente = require('../models/clienteSchema');
 
 // Registrar un nuevo pago
