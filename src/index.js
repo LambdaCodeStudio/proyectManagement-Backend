@@ -6,10 +6,10 @@ const connectDB = require('./config/db');
 const mongoSanitize = require('express-mongo-sanitize');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-const crypto = require('crypto');
-const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
+const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { 
   dosProtection, 
   sanitizeParams, 
@@ -20,7 +20,7 @@ const {
   cacheControl,
   logSuspiciousActivity
 } = require('./middleware/security');
-const { corsOptions, corsPublicOptions } = require('./config/cors');
+const corsOptions = require('./config/cors');
 const MongoStore = require('connect-mongo');
 
 // Inicializar Express
@@ -46,14 +46,14 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://sdk.mercadopago.com"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https://*.mercadopago.com"],
+      connectSrc: ["'self'", "https://api.mercadopago.com", "https://*.mercadopago.com"],
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
+      frameSrc: ["'self'", "https://*.mercadopago.com"],
       formAction: ["'self'"],
       workerSrc: ["'self'", "blob:"]
     }
@@ -101,7 +101,7 @@ app.use(session({
     mongoUrl: process.env.MONGODB_URI,
     ttl: 24 * 60 * 60, // 1 día
     crypto: {
-      secret: process.env.SESSION_SECRET // Usa el mismo secret para simplificar
+      secret: process.env.SESSION_CRYPTO_SECRET
     },
     autoRemove: 'interval',
     autoRemoveInterval: 60, // Limpiar sesiones expiradas cada 60 minutos
@@ -115,8 +115,11 @@ app.use(session({
   }
 }));
 
-// Generar y proporcionar token CSRF - esto se aplica a todas las respuestas
+// Generar y proporcionar token CSRF
 app.use(generateCsrfToken);
+
+// CSRF Protection - después de inicializar session
+app.use(csrfProtection);
 
 // Rate Limiting - diferente por rutas
 const authLimiter = rateLimit({
@@ -142,11 +145,25 @@ const apiLimiter = rateLimit({
   }
 });
 
+// Rate limiter específico para creación de pagos
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10, // máximo 10 pagos por hora
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  message: {
+    status: 'error',
+    message: 'Límite de creación de pagos excedido. Intente más tarde.'
+  }
+});
+
 // Aplicar limitadores de tasa según la ruta
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/payments/preference', paymentLimiter);
 app.use('/api', apiLimiter);
 
 // Protección contra DoS
@@ -167,40 +184,65 @@ app.use((req, res, next) => {
   next();
 });
 
-// ============= RUTAS PÚBLICAS (sin protección CSRF) =============
-
 // Endpoint para verificar estado de salud del servicio
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'success',
     uptime: process.uptime(),
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    environment: process.env.NODE_ENV || 'development',
+    services: {
+      database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      payments: process.env.MP_ACCESS_TOKEN ? 'configured' : 'not configured'
+    }
   });
 });
 
 // Endpoint para obtener token CSRF (útil para SPA)
 app.get('/api/csrf-token', (req, res) => {
-  console.log('Token CSRF solicitado:', req.session.csrfToken);
   res.json({ 
     csrfToken: req.session.csrfToken 
   });
 });
 
-// ============= RUTAS PROTEGIDAS (con CSRF) =============
+// Rutas API principales
+app.use('/api/auth', require('./routes/auth'));
 
-// Rutas API - Cada ruta aplica csrfProtection específicamente
-app.use('/api/auth', require('./routes/auth'));  // No aplicamos CSRF a auth para permitir login/register
-app.use('/api/cliente', csrfProtection, require('./routes/clienteRoutes'));
-app.use('/api/cobrosExtraOrdinarios', csrfProtection, require('./routes/cobrosExtraOrdinariosRoutes'));
-app.use('/api/pagos', csrfProtection, require('./routes/pagosRoutes'));
-app.use('/api/proyectos', require('./routes/proyectoRoutes'));
-app.use('/api/facturas', require('./routes/facturaRoutes'));
+// Rutas del sistema de pagos
+app.use('/api/debts', require('./routes/debt'));
+app.use('/api/payments', require('./routes/payment'));
+app.use('/api/mercadopago', require('./routes/mercadopago'));
+
+// Endpoint de información del sistema de pagos
+app.get('/api/payments/info', (req, res) => {
+  res.json({
+    status: 'success',
+    data: {
+      version: '1.0.0',
+      features: [
+        'Gestión de deudas',
+        'Pagos con Mercado Pago',
+        'Historial de pagos',
+        'Notificaciones webhook',
+        'Reembolsos'
+      ],
+      mercadoPago: {
+        mode: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
+        publicKey: process.env.MP_PUBLIC_KEY,
+        checkoutPro: true,
+        supportedCurrencies: ['ARS', 'USD']
+      }
+    }
+  });
+});
 
 // Middleware para errores 404
 app.use((req, res) => {
   res.status(404).json({ 
     status: 'error',
-    message: 'Recurso no encontrado' 
+    message: 'Recurso no encontrado',
+    path: req.originalUrl,
+    method: req.method
   });
 });
 
@@ -219,7 +261,8 @@ app.use((err, req, res, next) => {
   res.status(status).json({
     status: 'error',
     message,
-    requestId: req.requestId // Incluir ID para referenciar en reportes
+    requestId: req.requestId, // Incluir ID para referenciar en reportes
+    code: err.code || null
   });
 });
 
@@ -254,7 +297,11 @@ const PORT = process.env.PORT || 4000;
 let server;
 connectDB()
   .then(() => {
-    server = app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+    server = app.listen(PORT, () => {
+      console.log(`Servidor en puerto ${PORT}`);
+      console.log(`Modo: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Sistema de pagos: ${process.env.MP_ACCESS_TOKEN ? 'Configurado' : 'No configurado'}`);
+    });
     
     // Configurar timeout del servidor
     server.timeout = 30000; // 30 segundos
@@ -267,8 +314,3 @@ connectDB()
     console.error('Error al iniciar servidor:', err);
     process.exit(1);
   });
-
-if (process.env.NODE_ENV === 'production') {
-  console.log('Iniciando tareas programadas...');
-  require('./tasks/cronJobs');
-}

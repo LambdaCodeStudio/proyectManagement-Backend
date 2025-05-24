@@ -22,16 +22,7 @@ const login = async (req, res) => {
     if (!isMatch) return res.status(400).json({ msg: 'Contraseña incorrecta' });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
-    
-    // Formatear la respuesta según lo que espera el frontend
-    res.json({ 
-      status: 'success',
-      token,
-      user: {
-        userId: user._id,
-        email: user.email
-      }
-    });
+    res.json({ token });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

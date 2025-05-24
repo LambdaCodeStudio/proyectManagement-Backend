@@ -15,6 +15,7 @@
     "connect-mongo": "^5.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-mongo-sanitize": "^2.2.0",
@@ -24,12 +25,10 @@
     "helmet": "^8.0.0",
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
-    "mercadopago": "^2.4.0",
+    "mercadopago": "^2.0.15",
     "mongoose": "^8.10.1",
-    "node-cron": "^3.0.3",
-    "nodemailer": "^6.10.0",
-    "react-router-dom": "^7.3.0",
-    "toobusy-js": "^0.5.1"
+    "toobusy-js": "^0.5.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

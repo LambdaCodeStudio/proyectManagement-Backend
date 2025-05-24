@@ -1,206 +1,421 @@
-# Backend Seguro con Express y MongoDB
+# 💳 Sistema de Pagos con Mercado Pago - Documentación
 
-Esta plantilla proporciona un backend seguro y listo para producción con Express.js y MongoDB, implementando las mejores prácticas de seguridad y rendimiento.
+## 📋 Índice
+1. [Configuración Inicial](#configuración-inicial)
+2. [Variables de Entorno](#variables-de-entorno)
+3. [Modelos de Datos](#modelos-de-datos)
+4. [API Endpoints](#api-endpoints)
+5. [Flujo de Pago](#flujo-de-pago)
+6. [Webhooks](#webhooks)
+7. [Testing](#testing)
+8. [Producción](#producción)
 
-## 🛡️ Características de Seguridad Avanzadas
+## 🚀 Configuración Inicial
 
-- ✅ Autenticación JWT con renovación automática y soporte multi-fuente
-- ✅ Protección CSRF avanzada con tokens y verificación de origen
-- ✅ Rate limiting diferenciado por ruta con penalización para intentos fallidos
-- ✅ Detección de contenido malicioso en solicitudes
-- ✅ Protección contra inyecciones NoSQL con alertas
-- ✅ Content Security Policy (CSP) configurable por tipo de contenido
-- ✅ Cookies seguras con firma criptográfica
-- ✅ Control granular de caché para prevenir filtraciones de datos
-- ✅ Gestión segura de sesiones en MongoDB con cifrado adicional
-- ✅ Tracking de actividad sospechosa y ataques potenciales
-- ✅ Cierre controlado del servidor para mantener integridad de datos
-- ✅ Sistema de correlación de errores con Request-ID
-- ✅ Monitoreo de salud del servidor con endpoint dedicado
-- ✅ Control de tamaño de payload para prevenir ataques DoS
-- ✅ Headers de seguridad extensivos con configuración optimizada
+### 1. Instalar el sistema
 
-## 📋 Requisitos Previos
-
-- Node.js (v14 o superior)
-- MongoDB instalado y corriendo
-- npm o yarn
-
-## 🚀 Instalación
-
-1. Clonar e instalar:
 ```bash
-git clone <tu-repositorio>
-cd backend
-npm install
+# Ejecutar el script de instalación
+chmod +x setup-payment-system.sh
+./setup-payment-system.sh
 ```
 
-2. Configurar `.env`:
+### 2. Configurar Mercado Pago
+
+1. Crear una cuenta en [Mercado Pago Developers](https://www.mercadopago.com.ar/developers)
+2. Crear una aplicación nueva
+3. Obtener las credenciales (Access Token y Public Key)
+4. Configurar los webhooks en tu aplicación
+
+### 3. Configurar variables de entorno
+
+Copiar `.env.example` a `.env` y completar:
+
 ```env
-# Server
-PORT=4000
-NODE_ENV=production
+# Mercado Pago Configuration
+MP_ACCESS_TOKEN=APP_USR-xxxxxxxxxxxxx
+MP_PUBLIC_KEY=APP_USR-xxxxxxxxxxxxx
+MP_WEBHOOK_SECRET=tu-secret-webhook
 
-# Database
-MONGODB_URI=mongodb://localhost:27017/tubasededatos
+# Frontend URL
+FRONTEND_URL=http://localhost:3000
+BACKEND_URL=http://localhost:4000
 
-# Security
-JWT_SECRET=genera_un_token_aleatorio_largo_y_seguro_aqui
-JWT_EXPIRES_IN=1d
-SESSION_SECRET=otro_token_aleatorio_largo_y_seguro_diferente
-SESSION_CRYPTO_SECRET=token_aleatorio_para_cifrado_sesiones
-COOKIE_SECRET=token_aleatorio_para_firmar_cookies
+# Payment URLs
+PAYMENT_SUCCESS_URL=http://localhost:3000/payments/success
+PAYMENT_FAILURE_URL=http://localhost:3000/payments/failure
+PAYMENT_PENDING_URL=http://localhost:3000/payments/pending
 
-# CORS
-CORS_ORIGIN=http://localhost:3000,https://tudominio.com
-
-# Logs (opcional)
-LOG_LEVEL=error
-LOG_FORMAT=combined
+# Statement descriptor (aparece en el resumen de tarjeta)
+MP_STATEMENT_DESCRIPTOR=MIPAGO
 ```
 
-## 🏃‍♂️ Inicio
+## 📊 Modelos de Datos
+
+### Debt (Deuda)
+```javascript
+{
+  _id: ObjectId,
+  user: ObjectId (ref: User),
+  description: String,
+  amount: Number,
+  currency: String (ARS/USD),
+  status: String (pending/processing/paid/cancelled/overdue),
+  dueDate: Date,
+  category: String,
+  payments: [ObjectId] (ref: Payment),
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Payment (Pago)
+```javascript
+{
+  _id: ObjectId,
+  user: ObjectId (ref: User),
+  debt: ObjectId (ref: Debt),
+  amount: Number,
+  currency: String,
+  status: String,
+  mercadopago: {
+    preferenceId: String,
+    paymentId: String,
+    externalReference: String,
+    // ... más datos de MP
+  },
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+## 🔌 API Endpoints
+
+### Autenticación
+Todos los endpoints (excepto webhooks) requieren autenticación JWT:
+```
+Authorization: Bearer <token>
+```
+
+### 📋 Endpoints de Deudas
+
+#### Obtener deudas del usuario
+```http
+GET /api/debts
+Query params:
+  - status: pending|processing|paid|cancelled|overdue
+  - overdue: true|false
+  - page: number (default: 1)
+  - limit: number (default: 10, max: 100)
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "debts": [...],
+    "pagination": {...},
+    "summary": {
+      "totalAmount": 5000,
+      "totalDebts": 3
+    }
+  }
+}
+```
+
+#### Obtener una deuda específica
+```http
+GET /api/debts/:id
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "_id": "...",
+    "description": "Servicio mensual",
+    "amount": 1500,
+    "status": "pending",
+    "dueDate": "2024-12-31",
+    "canBePaid": true,
+    "totalPaid": 0
+  }
+}
+```
+
+#### Obtener estadísticas
+```http
+GET /api/debts/stats
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "statusBreakdown": [...],
+    "totalDebts": 10,
+    "totalAmount": 15000,
+    "upcomingDebts": 3
+  }
+}
+```
+
+### 💳 Endpoints de Pagos
+
+#### Crear preferencia de pago
+```http
+POST /api/payments/preference/:debtId
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "preferenceId": "xxx-xxx-xxx",
+    "initPoint": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=xxx",
+    "sandboxInitPoint": "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=xxx",
+    "expirationDate": "2024-01-02T00:00:00.000Z",
+    "paymentId": "xxx"
+  }
+}
+```
+
+#### Obtener historial de pagos
+```http
+GET /api/payments
+Query params:
+  - status: pending|processing|approved|rejected|cancelled
+  - debtId: ObjectId
+  - page: number
+  - limit: number
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "payments": [...],
+    "pagination": {...},
+    "stats": {
+      "totalPayments": 15,
+      "totalAmount": 25000
+    }
+  }
+}
+```
+
+#### Verificar estado de pago
+```http
+GET /api/payments/status/check?external_reference=xxx&payment_id=xxx&status=approved
+
+Response:
+{
+  "status": "success",
+  "data": {
+    "payment": {
+      "id": "xxx",
+      "status": "approved",
+      "amount": 1500
+    },
+    "debt": {
+      "id": "xxx",
+      "status": "paid"
+    }
+  }
+}
+```
+
+#### Cancelar pago
+```http
+POST /api/payments/:id/cancel
+Body:
+{
+  "reason": "Usuario canceló el pago"
+}
+```
+
+#### Reintentar pago
+```http
+POST /api/payments/:id/retry
+```
+
+#### Solicitar reembolso
+```http
+POST /api/payments/:id/refund
+Body:
+{
+  "reason": "Motivo del reembolso",
+  "amount": 1000 // opcional, por defecto total
+}
+```
+
+### 🔔 Endpoints de Webhooks
+
+#### Webhook principal (configurar en MP)
+```http
+POST /api/mercadopago/webhook
+```
+
+#### Verificar estado del webhook
+```http
+GET /api/mercadopago/webhook/health
+```
+
+## 💰 Flujo de Pago
+
+### 1. Usuario selecciona deuda a pagar
+```javascript
+// Frontend
+const debt = await api.get('/api/debts/123');
+```
+
+### 2. Crear preferencia de pago
+```javascript
+const { data } = await api.post(`/api/payments/preference/${debtId}`);
+const { initPoint, preferenceId } = data.data;
+```
+
+### 3. Redirigir a Mercado Pago
+```javascript
+// Opción 1: Redirección
+window.location.href = initPoint;
+
+// Opción 2: Modal (con SDK de MP)
+const mp = new MercadoPago('PUBLIC_KEY');
+const checkout = mp.checkout({
+  preference: { id: preferenceId }
+});
+checkout.open();
+```
+
+### 4. Usuario completa el pago en MP
+
+### 5. MP redirige según resultado
+- Éxito: `PAYMENT_SUCCESS_URL?external_reference=xxx&payment_id=xxx`
+- Error: `PAYMENT_FAILURE_URL?external_reference=xxx`
+- Pendiente: `PAYMENT_PENDING_URL?external_reference=xxx`
+
+### 6. Frontend verifica estado
+```javascript
+const params = new URLSearchParams(window.location.search);
+const externalReference = params.get('external_reference');
+
+const { data } = await api.get('/api/payments/status/check', {
+  params: {
+    external_reference: externalReference,
+    payment_id: params.get('payment_id'),
+    status: params.get('status')
+  }
+});
+```
+
+## 🔔 Webhooks
+
+### Configuración en Mercado Pago
+
+1. Ir a tu aplicación en MP Developers
+2. Configurar Webhooks/IPN
+3. URL: `https://tu-dominio.com/api/mercadopago/webhook`
+4. Eventos a escuchar:
+   - Payment
+   - Merchant Order (opcional)
+
+### Procesamiento de Webhooks
+
+El sistema procesa automáticamente:
+- Actualización de estado de pagos
+- Marcado de deudas como pagadas
+- Registro de historial
+
+### Testing de Webhooks en desarrollo
+
+Usar [ngrok](https://ngrok.com/) para exponer localhost:
 
 ```bash
-npm start
+ngrok http 4000
 ```
 
-## 📁 Estructura y Flujo
-
+Configurar la URL de ngrok en MP:
 ```
-backend/
-  ├── src/
-  │   ├── config/
-  │   │   ├── db.js        # Conexión MongoDB
-  │   │   └── cors.js      # Configuración CORS mejorada
-  │   ├── controllers/
-  |   |   └── auth.js      # Controladores autenticación
-  │   ├── middleware/
-  │   │   ├── auth.js      # JWT Middleware avanzado
-  │   │   └── security.js  # Múltiples capas de seguridad
-  │   ├── models/
-  │   ├── routes/
-  │   └── index.js         # Configuración principal
+https://xxx.ngrok.io/api/mercadopago/webhook
 ```
 
-## 🔒 Protocolos de Seguridad Implementados
+## 🧪 Testing
 
-### 1. Sistema Completo de Protección CSRF
-- **Double Submit Cookie Pattern**: Token CSRF enviado tanto en cookie como en header
-- **Verificación Origen/Referer**: Validación estricta de origen de solicitudes
-- **Generación Segura**: Tokens CSRF utilizando `crypto.randomBytes()`
-- **API Endpoint**: Soporte para SPAs con `/api/csrf-token`
-- **Renovación Automática**: Regeneración de tokens en caso de error
-- **Bypass de Métodos Seguros**: Permitido para GET/HEAD/OPTIONS
+### Tarjetas de prueba
 
-### 2. Sistema Avanzado de Detección de Amenazas
-- **Patrones de Ataque**: Detección de patrones de XSS, inyección, etc.
-- **Registro de Actividad Sospechosa**: Alertas para URLs y patrones maliciosos
-- **Monitoreo de Payloads**: Validación de tamaño y contenido
-- **Logging Mejorado**: Correlación de solicitudes con Request-IDs únicos
-- **Sanitización de Datos**: Limpieza agresiva de entradas con alertas de intento
+| Tarjeta | Número | CVV | Vencimiento |
+|---------|---------|-----|-------------|
+| Mastercard (aprobada) | 5031 7557 3453 0604 | 123 | 11/25 |
+| Visa (aprobada) | 4509 9535 6623 3704 | 123 | 11/25 |
+| Amex (aprobada) | 3711 803032 57522 | 1234 | 11/25 |
 
-### 3. Gestión de Sesiones de Alta Seguridad
-- **Almacenamiento Encriptado**: Datos de sesión cifrados en MongoDB
-- **Rotación Automática**: Rolling sessions para extender automáticamente
-- **Timeout de Inactividad**: Caducidad configurable
-- **Limpieza Periódica**: Auto-eliminación de sesiones expiradas
-- **Optimización MongoDB**: Reducción de operaciones con touchAfter
+### Usuarios de prueba
 
-### 4. Protección Contra Ataques de Fuerza Bruta
-- **Rate Limiting Inteligente**: Diferentes límites según criticidad de ruta
-- **Penalización para Fallos**: skipSuccessfulRequests para identificar ataques
-- **Headers Estándar**: Conformidad con RFC para clients y proxies
-- **Retry-After**: Indicación explícita de tiempo de espera
-- **Mensajes Claros**: Respuestas informativas sin divulgar detalles sensibles
+Crear en MP Developers:
+- Usuario vendedor (recibe pagos)
+- Usuario comprador (realiza pagos)
 
-### 5. Gestión Robusta de Errores y Despliegue
-- **Centralización**: Manejo unificado de todos los errores
-- **Request-ID**: Correlación para facilitar debugging
-- **Mensajes Sanitizados**: Sin detalle técnico en producción
-- **Cierre Controlado**: Proceso de apagado limpio con timeout
-- **Keep-Alive**: Configuración optimizada para balanceadores de carga
-
-## 🌐 Endpoints API
-
-### Autenticación y Usuarios
-- **POST** `/api/auth/register` - Registro con validación robusta
-- **POST** `/api/auth/login` - Login con generación de token JWT
-- **GET** `/api/auth/me` - Obtener perfil con renovación automática de token
-- **POST** `/api/auth/logout` - Cierre seguro de sesión
-- **POST** `/api/auth/forgot-password` - Solicitud de recuperación de contraseña
-- **POST** `/api/auth/reset-password` - Restablecimiento de contraseña con token
-- **POST** `/api/auth/change-password` - Cambio de contraseña (autenticado)
-
-### Sistema y Monitoreo
-- **GET** `/api/health` - Verificación de estado del servidor
-- **GET** `/api/csrf-token` - Obtención de nuevo token CSRF
-
-## ⚙️ Flujo de Seguridad de Solicitudes
-
-1. **Validación Inicial**:
-   - Verificación de actividad sospechosa
-   - Limitación de tamaño de payload
-   - Control CORS con origen verificado
-
-2. **Capa de Seguridad HTTP**:
-   - Headers Helmet con CSP estricto
-   - Sanitización de entradas MongoDB
-   - Protección contra parámetros duplicados
-
-3. **Validación de Contenido**:
-   - Detección de patrones maliciosos
-   - Control de caché para datos sensibles
-   - Rate limiting según criticidad
-
-4. **Verificación de Identidad**:
-   - CSRF token validation
-   - JWT verification con renovación
-   - Control de sesión
-
-5. **Procesamiento Seguro**:
-   - Validación específica de ruta
-   - Autorización basada en roles
-   - Sanitización de salidas
-
-6. **Manejo de Errores**:
-   - Request-ID para correlación
-   - Mensajes adaptados al entorno
-   - Logging estructurado
-
-## 🔧 Configuración de Helmet
-
-```javascript
-helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-      formAction: ["'self'"],
-      workerSrc: ["'self'", "blob:"]
-    }
-  },
-  // Configuraciones adicionales...
-})
+### Simular webhook
+```bash
+curl -X POST http://localhost:4000/api/mercadopago/webhook/test \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paymentId": "123456789",
+    "status": "approved"
+  }'
 ```
 
-## ⚠️ Consideraciones para Producción
+## 🚀 Producción
 
-1. Implementar HTTPS con certificados válidos
-2. Configurar límites de rate según tráfico esperado
-3. Ajustar CSP conforme a necesidades específicas
-4. Verificar compatibilidad CORS con todos los clientes
-5. Implementar logs a sistema externo para análisis
-6. Configurar sistema de alerta para actividad sospechosa
-7. Realizar auditorías de seguridad periódicas
+### Checklist
 
-## 📝 Licencia
+- [ ] Cambiar credenciales de MP a producción
+- [ ] Configurar HTTPS obligatorio
+- [ ] Configurar URLs de retorno de producción
+- [ ] Habilitar logs de producción
+- [ ] Configurar backups de BD
+- [ ] Monitoreo de webhooks
+- [ ] Rate limiting ajustado
+- [ ] Alertas de errores
 
-MIT
+### Variables de entorno adicionales
+
+```env
+NODE_ENV=production
+MONGODB_URI=mongodb+srv://...
+SESSION_SECRET=<strong-secret>
+JWT_SECRET=<strong-secret>
+```
+
+### Seguridad
+
+1. **HTTPS obligatorio**
+2. **Validar origen de webhooks**
+3. **Rate limiting estricto**
+4. **Logs de auditoría**
+5. **Encriptación de datos sensibles**
+
+## 📞 Soporte
+
+### Errores comunes
+
+1. **"Preference creation failed"**
+   - Verificar Access Token
+   - Verificar formato de datos
+
+2. **"Webhook not received"**
+   - Verificar URL configurada
+   - Revisar logs del servidor
+
+3. **"Payment not updating"**
+   - Verificar procesamiento de webhooks
+   - Revisar external_reference
+
+### Recursos
+
+- [Documentación MP](https://www.mercadopago.com.ar/developers/es/docs)
+- [API Reference](https://www.mercadopago.com.ar/developers/es/reference)
+- [SDKs](https://github.com/mercadopago)
+
+---
+
+## 📄 Licencia
+
+Este sistema está protegido por derechos de autor. Uso autorizado únicamente.
