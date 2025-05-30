@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+
 const { 
   dosProtection, 
   sanitizeParams, 
@@ -210,7 +211,7 @@ app.use('/api/auth', require('./routes/auth'));
 
 // Rutas del sistema de pagos
 app.use('/api/debts', require('./routes/debt'));
-app.use('/api/payments', require('./routes/payment'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api/mercadopago', require('./routes/mercadopago'));
 
 // Endpoint de información del sistema de pagos

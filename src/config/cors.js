@@ -15,9 +15,16 @@ const corsOptions = {
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With'
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'X-CSRF-Token',         // Para protección CSRF
+    'X-Client-ID',          // ← Esta era la cabecera que faltaba
+    'Cache-Control',
+    'Pragma',
+    'X-Request-ID'
   ],
   exposedHeaders: [
     'Content-Range', 
