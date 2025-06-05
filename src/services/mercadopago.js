@@ -36,32 +36,26 @@ class MercadoPagoService {
    * @returns {Object} URLs de retorno
    */
   getBackUrls(externalReference) {
-    // URLs por defecto para desarrollo
-    const baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL || 'http://localhost:3000';
+    // URLs base desde variables de entorno
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     
-    const defaultUrls = {
-      success: `${baseUrl}/payment/success`,
-      failure: `${baseUrl}/payment/failure`, 
-      pending: `${baseUrl}/payment/pending`
+    // URLs de retorno específicas o usar por defecto
+    const baseUrls = {
+      success: process.env.PAYMENT_SUCCESS_URL || `${frontendUrl}/payment/success`,
+      failure: process.env.PAYMENT_FAILURE_URL || `${frontendUrl}/payment/failure`,
+      pending: process.env.PAYMENT_PENDING_URL || `${frontendUrl}/payment/pending`
     };
 
-    // Usar URLs específicas si están definidas, sino usar las por defecto
-    const backUrls = {
-      success: process.env.PAYMENT_SUCCESS_URL || defaultUrls.success,
-      failure: process.env.PAYMENT_FAILURE_URL || defaultUrls.failure,
-      pending: process.env.PAYMENT_PENDING_URL || defaultUrls.pending
-    };
-
-    // Agregar referencia externa a todas las URLs
+    // Agregar referencia externa como query parameter
     const addQueryParam = (url, param, value) => {
       const separator = url.includes('?') ? '&' : '?';
       return `${url}${separator}${param}=${value}`;
     };
 
     return {
-      success: addQueryParam(backUrls.success, 'external_reference', externalReference),
-      failure: addQueryParam(backUrls.failure, 'external_reference', externalReference),
-      pending: addQueryParam(backUrls.pending, 'external_reference', externalReference)
+      success: addQueryParam(baseUrls.success, 'external_reference', externalReference),
+      failure: addQueryParam(baseUrls.failure, 'external_reference', externalReference),
+      pending: addQueryParam(baseUrls.pending, 'external_reference', externalReference)
     };
   }
 
@@ -97,12 +91,13 @@ class MercadoPagoService {
       const backUrls = this.getBackUrls(externalReference);
       console.log('🔗 URLs de retorno:', backUrls);
       
-      // Validar URLs
+      // Validar URLs - CRÍTICO
       Object.entries(backUrls).forEach(([key, url]) => {
         if (!this.isValidUrl(url)) {
           throw new Error(`URL de ${key} inválida: ${url}`);
         }
       });
+      console.log('✅ URLs validadas correctamente');
       
       // Configurar items
       const items = [{
@@ -138,11 +133,15 @@ class MercadoPagoService {
       const notificationUrl = `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/mercadopago/webhook`;
       console.log('📡 URL de notificación:', notificationUrl);
       
-      // Configuración de la preferencia
+      // Configuración de la preferencia - ESTRUCTURA CORREGIDA
       const preferenceData = {
         items,
         payer,
-        back_urls: backUrls,
+        back_urls: {
+          success: backUrls.success,
+          failure: backUrls.failure,
+          pending: backUrls.pending
+        },
         notification_url: notificationUrl,
         external_reference: externalReference,
         statement_descriptor: process.env.MP_STATEMENT_DESCRIPTOR || 'MIPAGO',
@@ -172,8 +171,15 @@ class MercadoPagoService {
         currency: items[0].currency_id,
         auto_return: preferenceData.auto_return,
         has_back_urls: !!preferenceData.back_urls,
+        back_urls_keys: Object.keys(preferenceData.back_urls),
         notification_url: !!preferenceData.notification_url
       });
+      
+      // DEBUG: Mostrar objeto completo en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Objeto completo a enviar a MP:');
+        console.log(JSON.stringify(preferenceData, null, 2));
+      }
       
       // Crear preferencia
       console.log('📤 Enviando preferencia a MercadoPago...');
@@ -208,6 +214,8 @@ class MercadoPagoService {
       
       if (error.message?.includes('back_url')) {
         errorMessage += ': URLs de retorno inválidas. Verifique la configuración de FRONTEND_URL';
+      } else if (error.message?.includes('auto_return')) {
+        errorMessage += ': Configuración de auto_return inválida';
       } else if (error.message?.includes('access_token')) {
         errorMessage += ': Token de acceso inválido. Verifique MP_ACCESS_TOKEN';
       } else if (error.message?.includes('amount')) {
