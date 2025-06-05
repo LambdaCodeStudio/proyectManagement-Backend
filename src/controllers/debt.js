@@ -1,5 +1,6 @@
 const Debt = require('../models/debt');
 const Payment = require('../models/payment');
+const { Types } = require('mongoose');
 const { validationResult } = require('express-validator');
 
 // Obtener todas las deudas del usuario
@@ -287,7 +288,7 @@ const getDebtStats = async (req, res) => {
     const userId = req.user.userId;
     
     const stats = await Debt.aggregate([
-       { $match: { user: new mongoose.Types.ObjectId(userId) } },
+       { $match: { user: new Types.ObjectId(userId) } },
       {
         $group: {
           _id: '$status',

@@ -1,14 +1,15 @@
 const mongoose = require('mongoose');
+const { Types } = mongoose;
 
 const paymentSchema = new mongoose.Schema({
   user: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: Types.ObjectId,
     ref: 'User',
     required: true,
     index: true
   },
   debt: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: Types.ObjectId,
     ref: 'Debt',
     required: true,
     index: true
@@ -64,74 +65,187 @@ const paymentSchema = new mongoose.Schema({
       type: String,
       index: true
     },
-    paymentType: String,
-    paymentMethodId: String,
-    paymentMethodType: String,
-    transactionAmount: Number,
-    netReceivedAmount: Number,
-    totalPaidAmount: Number,
-    currencyId: String,
-    dateApproved: Date,
-    dateCreated: Date,
-    lastModified: Date,
-    moneyReleaseDate: Date,
-    operationType: String,
-    issuerId: String,
-    installments: Number,
-    statementDescriptor: String,
-    authorizationCode: String,
-    processingMode: String,
-    merchantAccountId: String,
+    paymentType: {
+      type: String,
+      default: null
+    },
+    paymentMethodId: {
+      type: String,
+      default: null
+    },
+    paymentMethodType: {
+      type: String,
+      default: null
+    },
+    transactionAmount: {
+      type: Number,
+      default: null
+    },
+    netReceivedAmount: {
+      type: Number,
+      default: null
+    },
+    totalPaidAmount: {
+      type: Number,
+      default: null
+    },
+    currencyId: {
+      type: String,
+      default: null
+    },
+    dateApproved: {
+      type: Date,
+      default: null
+    },
+    dateCreated: {
+      type: Date,
+      default: null
+    },
+    lastModified: {
+      type: Date,
+      default: null
+    },
+    moneyReleaseDate: {
+      type: Date,
+      default: null
+    },
+    operationType: {
+      type: String,
+      default: null
+    },
+    issuerId: {
+      type: String,
+      default: null
+    },
+    installments: {
+      type: Number,
+      default: null
+    },
+    statementDescriptor: {
+      type: String,
+      default: null
+    },
+    authorizationCode: {
+      type: String,
+      default: null
+    },
+    processingMode: {
+      type: String,
+      default: null
+    },
+    merchantAccountId: {
+      type: String,
+      default: null
+    },
     // Información del pagador
     payer: {
-      id: String,
-      email: String,
-      identification: {
+      id: {
         type: String,
-        number: String
+        default: null
       },
-      type: String
+      email: {
+        type: String,
+        default: null
+      },
+      identification: {
+        type: {
+          type: String,
+          default: null
+        },
+        number: {
+          type: String,
+          default: null
+        }
+      },
+      type: {
+        type: String,
+        default: null
+      }
     },
     // Información adicional
     additionalInfo: {
       type: Map,
-      of: mongoose.Schema.Types.Mixed
+      of: String,
+      default: {}
     },
     // Fees y comisiones
     feeDetails: [{
       type: {
-        type: String
+        type: String,
+        default: null
       },
-      amount: Number,
-      feePayer: String
+      amount: {
+        type: Number,
+        default: null
+      },
+      feePayer: {
+        type: String,
+        default: null
+      }
     }],
     // Datos del rechazo
-    statusDetail: String,
-    callForAuthorizeId: String
+    statusDetail: {
+      type: String,
+      default: null
+    },
+    callForAuthorizeId: {
+      type: String,
+      default: null
+    }
   },
   // URLs de retorno
   urls: {
-    success: String,
-    failure: String,
-    pending: String,
-    notification: String
+    success: {
+      type: String,
+      default: null
+    },
+    failure: {
+      type: String,
+      default: null
+    },
+    pending: {
+      type: String,
+      default: null
+    },
+    notification: {
+      type: String,
+      default: null
+    }
   },
   // Información de la transacción
   transactionDetails: {
-    ip: String,
-    userAgent: String,
-    sessionId: String,
-    deviceId: String
+    ip: {
+      type: String,
+      default: null
+    },
+    userAgent: {
+      type: String,
+      default: null
+    },
+    sessionId: {
+      type: String,
+      default: null
+    },
+    deviceId: {
+      type: String,
+      default: null
+    }
   },
   // Historial de estados
   statusHistory: [{
-    status: String,
+    status: {
+      type: String,
+      required: true
+    },
     date: {
       type: Date,
       default: Date.now
     },
-    reason: String,
-    details: mongoose.Schema.Types.Mixed
+    reason: {
+      type: String,
+      default: null
+    },
+    details: mongoose.Schema.Types.Mixed // Fixed: Using proper Mixed type declaration
   }],
   // Intentos de pago
   attempts: {
@@ -141,18 +255,28 @@ const paymentSchema = new mongoose.Schema({
   // Notas y comentarios
   notes: {
     type: String,
-    maxlength: [1000, 'Las notas no pueden superar los 1000 caracteres']
+    maxlength: [1000, 'Las notas no pueden superar los 1000 caracteres'],
+    default: null
   },
   // Webhooks recibidos
   webhooksReceived: [{
-    id: String,
-    type: String,
-    action: String,
+    id: {
+      type: String,
+      default: null
+    },
+    type: {
+      type: String,
+      default: null
+    },
+    action: {
+      type: String,
+      default: null
+    },
     dateReceived: {
       type: Date,
       default: Date.now
     },
-    data: mongoose.Schema.Types.Mixed
+    data: mongoose.Schema.Types.Mixed // Fixed: Using proper Mixed type declaration
   }],
   // Metadata adicional
   metadata: {
@@ -194,11 +318,10 @@ paymentSchema.virtual('canBeRetried').get(function() {
 paymentSchema.pre('save', async function(next) {
   // Si el estado cambió, agregar al historial
   if (this.isModified('status')) {
-    const previousStatus = this.status;
     this.statusHistory.push({
       status: this.status,
       date: new Date(),
-      reason: this.mercadopago.statusDetail || 'Status update'
+      reason: this.mercadopago?.statusDetail || 'Status update'
     });
   }
   
@@ -296,7 +419,7 @@ paymentSchema.methods.retry = async function() {
 
 // Métodos estáticos
 paymentSchema.statics.findByUser = function(userId, options = {}) {
-  const query = this.find({ user: userId });
+  const query = this.find({ user: new Types.ObjectId(userId) });
   
   if (options.status) {
     query.where('status', options.status);
@@ -321,10 +444,8 @@ paymentSchema.statics.findByExternalReference = function(externalReference) {
   return this.findOne({ 'mercadopago.externalReference': externalReference });
 };
 
-// CORREGIDO: El método problemático getPaymentStats
 paymentSchema.statics.getPaymentStats = async function(userId, dateFrom, dateTo) {
-  // CORRECCIÓN: Usar new mongoose.Types.new ObjectId() en lugar de mongoose.Types.new ObjectId()
-  const match = { user: new mongoose.Types.new ObjectId(userId) }; // ← CORREGIDO
+  const match = { user: new Types.ObjectId(userId) };
   
   if (dateFrom || dateTo) {
     match.createdAt = {};
