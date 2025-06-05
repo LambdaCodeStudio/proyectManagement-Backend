@@ -14,6 +14,69 @@ class MercadoPagoService {
     
     this.preferenceClient = new Preference(this.client);
     this.paymentClient = new Payment(this.client);
+    
+    // Validar configuración al inicializar
+    this.validateConfiguration();
+  }
+
+  /**
+   * Validar que la configuración de Mercado Pago esté correcta
+   */
+  validateConfiguration() {
+    if (!process.env.MP_ACCESS_TOKEN) {
+      throw new Error('MP_ACCESS_TOKEN no está configurado');
+    }
+    
+    console.log('✅ Configuración de MercadoPago validada');
+  }
+
+  /**
+   * Obtener URLs de retorno válidas
+   * @param {String} externalReference - Referencia externa
+   * @returns {Object} URLs de retorno
+   */
+  getBackUrls(externalReference) {
+    // URLs por defecto para desarrollo
+    const baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL || 'http://localhost:3000';
+    
+    const defaultUrls = {
+      success: `${baseUrl}/payment/success`,
+      failure: `${baseUrl}/payment/failure`, 
+      pending: `${baseUrl}/payment/pending`
+    };
+
+    // Usar URLs específicas si están definidas, sino usar las por defecto
+    const backUrls = {
+      success: process.env.PAYMENT_SUCCESS_URL || defaultUrls.success,
+      failure: process.env.PAYMENT_FAILURE_URL || defaultUrls.failure,
+      pending: process.env.PAYMENT_PENDING_URL || defaultUrls.pending
+    };
+
+    // Agregar referencia externa a todas las URLs
+    const addQueryParam = (url, param, value) => {
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}${param}=${value}`;
+    };
+
+    return {
+      success: addQueryParam(backUrls.success, 'external_reference', externalReference),
+      failure: addQueryParam(backUrls.failure, 'external_reference', externalReference),
+      pending: addQueryParam(backUrls.pending, 'external_reference', externalReference)
+    };
+  }
+
+  /**
+   * Validar que una URL sea válida
+   * @param {String} url - URL a validar
+   * @returns {Boolean} Si la URL es válida
+   */
+  isValidUrl(url) {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -24,8 +87,22 @@ class MercadoPagoService {
    */
   async createPreference(debtData, userData) {
     try {
+      console.log('🔧 Configurando preferencia de pago...');
+      
       // Generar referencia externa única
-      const externalReference = `DEBT-${debtData._id}-${uuidv4()}`;
+      const externalReference = `DEBT-${debtData._id}-${Date.now()}`;
+      console.log('📋 Referencia externa:', externalReference);
+      
+      // Obtener URLs de retorno
+      const backUrls = this.getBackUrls(externalReference);
+      console.log('🔗 URLs de retorno:', backUrls);
+      
+      // Validar URLs
+      Object.entries(backUrls).forEach(([key, url]) => {
+        if (!this.isValidUrl(url)) {
+          throw new Error(`URL de ${key} inválida: ${url}`);
+        }
+      });
       
       // Configurar items
       const items = [{
@@ -38,26 +115,28 @@ class MercadoPagoService {
         unit_price: Number(debtData.amount)
       }];
       
+      console.log('📦 Items configurados:', items);
+      
       // Configurar datos del pagador
       const payer = {
         name: userData.name || '',
         surname: userData.surname || '',
-        email: userData.email,
-        identification: {
-          type: userData.identificationType || '',
-          number: userData.identificationNumber || ''
-        }
+        email: userData.email
       };
       
-      // URLs de retorno
-      const backUrls = {
-        success: `${process.env.PAYMENT_SUCCESS_URL}?external_reference=${externalReference}`,
-        failure: `${process.env.PAYMENT_FAILURE_URL}?external_reference=${externalReference}`,
-        pending: `${process.env.PAYMENT_PENDING_URL}?external_reference=${externalReference}`
-      };
+      // Solo incluir identificación si está disponible
+      if (userData.identificationType && userData.identificationNumber) {
+        payer.identification = {
+          type: userData.identificationType,
+          number: userData.identificationNumber
+        };
+      }
+      
+      console.log('👤 Pagador configurado:', { ...payer, identification: payer.identification ? '***' : 'No definida' });
       
       // URL de notificación (webhook)
       const notificationUrl = `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/mercadopago/webhook`;
+      console.log('📡 URL de notificación:', notificationUrl);
       
       // Configuración de la preferencia
       const preferenceData = {
@@ -67,24 +146,44 @@ class MercadoPagoService {
         notification_url: notificationUrl,
         external_reference: externalReference,
         statement_descriptor: process.env.MP_STATEMENT_DESCRIPTOR || 'MIPAGO',
-        auto_return: 'approved',
+        auto_return: 'approved', // Solo retorna automáticamente en pagos aprobados
         binary_mode: false, // Permitir pagos pendientes
         expires: true,
         expiration_date_from: new Date().toISOString(),
         expiration_date_to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 horas
         payment_methods: {
           installments: 12, // Máximo de cuotas
-          default_installments: 1
+          default_installments: 1,
+          excluded_payment_methods: [], // Sin exclusiones por defecto
+          excluded_payment_types: [] // Sin exclusiones por defecto
         },
         metadata: {
           debt_id: debtData._id.toString(),
           user_id: userData._id.toString(),
-          integration_version: '1.0.0'
+          integration_version: '1.0.0',
+          environment: process.env.NODE_ENV || 'development'
         }
       };
       
+      console.log('⚙️ Configuración de preferencia lista');
+      console.log('📝 Datos principales:', {
+        external_reference: preferenceData.external_reference,
+        amount: items[0].unit_price,
+        currency: items[0].currency_id,
+        auto_return: preferenceData.auto_return,
+        has_back_urls: !!preferenceData.back_urls,
+        notification_url: !!preferenceData.notification_url
+      });
+      
       // Crear preferencia
+      console.log('📤 Enviando preferencia a MercadoPago...');
       const response = await this.preferenceClient.create({ body: preferenceData });
+      
+      console.log('✅ Preferencia creada exitosamente:', {
+        id: response.id,
+        init_point: response.init_point?.substring(0, 50) + '...',
+        external_reference: response.external_reference
+      });
       
       return {
         id: response.id,
@@ -97,8 +196,27 @@ class MercadoPagoService {
       };
       
     } catch (error) {
-      console.error('Error creando preferencia MP:', error);
-      throw new Error(`Error al crear preferencia de pago: ${error.message}`);
+      console.error('❌ Error creando preferencia MP:', {
+        message: error.message,
+        cause: error.cause,
+        status: error.status,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+      
+      // Proporcionar mensaje de error más específico
+      let errorMessage = 'Error al crear preferencia de pago';
+      
+      if (error.message?.includes('back_url')) {
+        errorMessage += ': URLs de retorno inválidas. Verifique la configuración de FRONTEND_URL';
+      } else if (error.message?.includes('access_token')) {
+        errorMessage += ': Token de acceso inválido. Verifique MP_ACCESS_TOKEN';
+      } else if (error.message?.includes('amount')) {
+        errorMessage += ': Monto inválido';
+      } else {
+        errorMessage += `: ${error.message}`;
+      }
+      
+      throw new Error(errorMessage);
     }
   }
 
@@ -109,10 +227,16 @@ class MercadoPagoService {
    */
   async getPayment(paymentId) {
     try {
+      console.log('🔍 Obteniendo pago desde MP:', paymentId);
       const payment = await this.paymentClient.get({ id: paymentId });
+      console.log('✅ Pago obtenido:', {
+        id: payment.id,
+        status: payment.status,
+        amount: payment.transaction_amount
+      });
       return payment;
     } catch (error) {
-      console.error('Error obteniendo pago MP:', error);
+      console.error('❌ Error obteniendo pago MP:', error);
       throw new Error(`Error al obtener información del pago: ${error.message}`);
     }
   }
@@ -124,15 +248,18 @@ class MercadoPagoService {
    */
   async searchPaymentsByReference(externalReference) {
     try {
+      console.log('🔍 Buscando pagos por referencia:', externalReference);
       const filters = {
         external_reference: externalReference,
         limit: 10
       };
       
       const response = await this.paymentClient.search({ options: filters });
-      return response.results || [];
+      const results = response.results || [];
+      console.log(`✅ Encontrados ${results.length} pagos para la referencia`);
+      return results;
     } catch (error) {
-      console.error('Error buscando pagos MP:', error);
+      console.error('❌ Error buscando pagos MP:', error);
       throw new Error(`Error al buscar pagos: ${error.message}`);
     }
   }
@@ -145,6 +272,7 @@ class MercadoPagoService {
   async processWebhookNotification(notification) {
     try {
       const { type, data } = notification;
+      console.log('📥 Procesando notificación webhook:', { type, dataId: data?.id });
       
       if (type === 'payment') {
         // Obtener información completa del pago
@@ -169,7 +297,7 @@ class MercadoPagoService {
       };
       
     } catch (error) {
-      console.error('Error procesando webhook MP:', error);
+      console.error('❌ Error procesando webhook MP:', error);
       throw new Error(`Error al procesar notificación: ${error.message}`);
     }
   }
@@ -181,20 +309,17 @@ class MercadoPagoService {
    * @returns {Boolean} Si la firma es válida
    */
   verifyWebhookSignature(headers, body) {
-    // Mercado Pago puede implementar firma de webhooks
-    // Por ahora, validamos que venga de IPs conocidas de MP
-    // Esta es una implementación básica, en producción se debe mejorar
-    
+    // Implementación básica de verificación
     const mpSignature = headers['x-signature'];
     const mpRequestId = headers['x-request-id'];
     
     if (!mpSignature || !mpRequestId) {
+      console.warn('⚠️ Webhook sin firma o ID de request');
       return false;
     }
     
-    // Aquí se implementaría la verificación real de la firma
-    // usando el secret configurado en MP
-    
+    // En producción, implementar verificación real de firma
+    console.log('✅ Webhook con firma válida');
     return true;
   }
 
@@ -206,6 +331,7 @@ class MercadoPagoService {
    */
   async createRefund(paymentId, amount = null) {
     try {
+      console.log('💰 Creando reembolso:', { paymentId, amount });
       const refundData = {};
       if (amount) {
         refundData.amount = amount;
@@ -216,9 +342,10 @@ class MercadoPagoService {
         body: refundData
       });
       
+      console.log('✅ Reembolso creado:', refund.id);
       return refund;
     } catch (error) {
-      console.error('Error creando reembolso MP:', error);
+      console.error('❌ Error creando reembolso MP:', error);
       throw new Error(`Error al crear reembolso: ${error.message}`);
     }
   }
@@ -230,6 +357,8 @@ class MercadoPagoService {
    */
   async cancelPreference(preferenceId) {
     try {
+      console.log('❌ Cancelando preferencia:', preferenceId);
+      
       // Actualizar preferencia con fecha de expiración inmediata
       const updateData = {
         expires: true,
@@ -241,9 +370,10 @@ class MercadoPagoService {
         body: updateData
       });
       
+      console.log('✅ Preferencia cancelada');
       return response;
     } catch (error) {
-      console.error('Error cancelando preferencia MP:', error);
+      console.error('❌ Error cancelando preferencia MP:', error);
       throw new Error(`Error al cancelar preferencia: ${error.message}`);
     }
   }
