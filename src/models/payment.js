@@ -321,8 +321,10 @@ paymentSchema.statics.findByExternalReference = function(externalReference) {
   return this.findOne({ 'mercadopago.externalReference': externalReference });
 };
 
+// CORREGIDO: El método problemático getPaymentStats
 paymentSchema.statics.getPaymentStats = async function(userId, dateFrom, dateTo) {
-  const match = { user: mongoose.Types.ObjectId(userId) };
+  // CORRECCIÓN: Usar new mongoose.Types.new ObjectId() en lugar de mongoose.Types.new ObjectId()
+  const match = { user: new mongoose.Types.new ObjectId(userId) }; // ← CORREGIDO
   
   if (dateFrom || dateTo) {
     match.createdAt = {};
@@ -330,32 +332,44 @@ paymentSchema.statics.getPaymentStats = async function(userId, dateFrom, dateTo)
     if (dateTo) match.createdAt.$lte = dateTo;
   }
   
-  const result = await this.aggregate([
-    { $match: match },
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-        totalAmount: { $sum: '$amount' }
-      }
-    },
-    {
-      $group: {
-        _id: null,
-        stats: {
-          $push: {
-            status: '$_id',
-            count: '$count',
-            totalAmount: '$totalAmount'
-          }
-        },
-        totalPayments: { $sum: '$count' },
-        totalAmount: { $sum: '$totalAmount' }
-      }
-    }
-  ]);
+  console.log('📊 === CALCULANDO ESTADÍSTICAS DE PAGOS ===');
+  console.log('👤 User ID:', userId);
+  console.log('🔍 Match query:', match);
   
-  return result[0] || { stats: [], totalPayments: 0, totalAmount: 0 };
+  try {
+    const result = await this.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          stats: {
+            $push: {
+              status: '$_id',
+              count: '$count',
+              totalAmount: '$totalAmount'
+            }
+          },
+          totalPayments: { $sum: '$count' },
+          totalAmount: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+    
+    const stats = result[0] || { stats: [], totalPayments: 0, totalAmount: 0 };
+    console.log('✅ Estadísticas calculadas:', stats);
+    
+    return stats;
+  } catch (error) {
+    console.error('❌ Error en getPaymentStats:', error);
+    throw error;
+  }
 };
 
 paymentSchema.statics.cleanupOldPendingPayments = async function(daysOld = 7) {

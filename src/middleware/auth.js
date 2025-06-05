@@ -23,7 +23,11 @@ const auth = (req, res, next) => {
     if (decoded.exp && decoded.exp - now < 300) { // less than 5 minutes left
       // Create new token with extended expiry
       const newToken = jwt.sign(
-        { userId: decoded.userId, email: decoded.email },
+        { 
+          userId: decoded.userId || decoded.id, // Compatibilidad con tokens antiguos
+          email: decoded.email,
+          role: decoded.role || 'cliente' // Por defecto es cliente si no tiene rol
+        },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
       );
@@ -41,7 +45,13 @@ const auth = (req, res, next) => {
       }
     }
     
-    req.user = decoded;
+    // Asegurar que req.user tenga un formato consistente
+    req.user = {
+      userId: decoded.userId || decoded.id, // Compatibilidad con tokens antiguos
+      email: decoded.email,
+      role: decoded.role || 'cliente' // Por defecto es cliente si no tiene rol
+    };
+    
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

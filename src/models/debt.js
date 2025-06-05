@@ -197,6 +197,22 @@ debtSchema.statics.findOverdue = function() {
   });
 };
 
+debtSchema.statics.getTotalDebtAll = async function() {
+  const result = await this.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalAmount: { $sum: '$amount' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+  
+  return result.length > 0 
+    ? { totalAmount: result[0].totalAmount, count: result[0].count }
+    : { totalAmount: 0, count: 0 };
+};
+
 debtSchema.statics.updateOverdueDebts = async function() {
   return this.updateMany(
     {
@@ -213,7 +229,7 @@ debtSchema.statics.getTotalDebtByUser = async function(userId) {
   const result = await this.aggregate([
     { 
       $match: { 
-        user: mongoose.Types.ObjectId(userId),
+    user: mongoose.Types.new ObjectId(userId),  
         status: { $in: ['pending', 'overdue', 'processing'] }
       }
     },

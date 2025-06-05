@@ -5,11 +5,23 @@ const { validationResult } = require('express-validator');
 // Obtener todas las deudas del usuario
 const getDebts = async (req, res) => {
   try {
-    const { status, overdue, page = 1, limit = 10 } = req.query;
-    const userId = req.user.userId;
+    const { status, overdue, page = 1, limit = 10, userId: queryUserId } = req.query;
+    let filters = {};
     
-    // Construir filtros
-    const filters = { user: userId };
+    // Si es admin y se proporciona un ID de usuario específico
+    if (req.user.role === 'admin' && queryUserId) {
+      filters.user = queryUserId;
+    } 
+    // Si es admin y no se proporciona un ID de usuario, puede ver todas las deudas
+    else if (req.user.role === 'admin') {
+      // No aplicar filtro de usuario para que pueda ver todas las deudas
+    } 
+    // Si es cliente, solo puede ver sus propias deudas
+    else {
+      filters.user = req.user.userId;
+    }
+    
+    // Aplicar filtros adicionales
     if (status) {
       filters.status = status;
     }
@@ -27,6 +39,7 @@ const getDebts = async (req, res) => {
     const [debts, total] = await Promise.all([
       Debt.find(filters)
         .populate('payments', 'amount status createdAt')
+        .populate('user', 'email name') // Incluir información básica del usuario
         .sort('-createdAt')
         .limit(limit * 1)
         .skip(skip)
@@ -37,8 +50,11 @@ const getDebts = async (req, res) => {
     // Actualizar estados de deudas vencidas
     await Debt.updateOverdueDebts();
     
-    // Calcular totales
-    const summary = await Debt.getTotalDebtByUser(userId);
+    // Calcular totales (si es cliente, solo sus deudas; si es admin, según el filtro)
+    const summaryUserId = req.user.role === 'admin' && queryUserId ? queryUserId : req.user.userId;
+    const summary = req.user.role === 'admin' && !queryUserId 
+      ? await Debt.getTotalDebtAll() // Método que debe implementarse para obtener totales generales
+      : await Debt.getTotalDebtByUser(summaryUserId);
     
     res.json({
       status: 'success',
@@ -70,14 +86,22 @@ const getDebts = async (req, res) => {
 const getDebtById = async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user.userId;
     
-    const debt = await Debt.findOne({ _id: id, user: userId })
+    // Construir la consulta según el rol
+    let query = { _id: id };
+    
+    // Si es cliente, solo puede ver sus propias deudas
+    if (req.user.role !== 'admin') {
+      query.user = req.user.userId;
+    }
+    
+    const debt = await Debt.findOne(query)
       .populate({
         path: 'payments',
         select: 'amount status mercadopago.paymentId createdAt',
         options: { sort: { createdAt: -1 } }
       })
+      .populate('user', 'email name') // Incluir información del usuario
       .lean();
     
     if (!debt) {
@@ -263,7 +287,7 @@ const getDebtStats = async (req, res) => {
     const userId = req.user.userId;
     
     const stats = await Debt.aggregate([
-      { $match: { user: mongoose.Types.ObjectId(userId) } },
+       { $match: { user: new mongoose.Types.ObjectId(userId) } },
       {
         $group: {
           _id: '$status',

@@ -4,24 +4,38 @@ const User = require('../models/user');
 const { getInstance: getMercadoPagoService } = require('../services/mercadopago');
 const { validationResult } = require('express-validator');
 
+// CRÍTICO: Importar ObjectId correctamente
+const { ObjectId } = require('mongoose').Types;
+
 // Crear preferencia de pago para una deuda
 const createPaymentPreference = async (req, res) => {
   try {
+    console.log('💳 === CREANDO PREFERENCIA DE PAGO ===');
     const { debtId } = req.params;
     const userId = req.user.userId;
     
-    // Obtener la deuda
-    const debt = await Debt.findOne({ _id: debtId, user: userId });
+    console.log('🏷️ Debt ID:', debtId);
+    console.log('👤 User ID:', userId);
+    
+    // CORRECCIÓN: Usar new ObjectId()
+    const debt = await Debt.findOne({ 
+      _id: new ObjectId(debtId), 
+      user: new ObjectId(userId) 
+    });
     
     if (!debt) {
+      console.error('❌ Deuda no encontrada');
       return res.status(404).json({
         status: 'error',
         message: 'Deuda no encontrada'
       });
     }
     
+    console.log('✅ Deuda encontrada:', debt.description);
+    
     // Verificar si la deuda puede ser pagada
     if (!debt.canBePaid()) {
+      console.error('❌ Deuda no puede ser pagada, estado:', debt.status);
       return res.status(400).json({
         status: 'error',
         message: 'Esta deuda no puede ser pagada en su estado actual',
@@ -31,12 +45,12 @@ const createPaymentPreference = async (req, res) => {
     
     // Verificar si ya hay un pago en proceso
     const pendingPayment = await Payment.findOne({
-      debt: debtId,
+      debt: new ObjectId(debtId),
       status: { $in: ['pending', 'processing'] }
     });
     
     if (pendingPayment && pendingPayment.createdAt > new Date(Date.now() - 30 * 60 * 1000)) {
-      // Si hay un pago pendiente creado en los últimos 30 minutos
+      console.log('⚠️ Ya existe un pago pendiente reciente');
       return res.json({
         status: 'success',
         message: 'Ya existe una preferencia de pago activa',
@@ -48,16 +62,19 @@ const createPaymentPreference = async (req, res) => {
     }
     
     // Obtener datos del usuario
-    const user = await User.findById(userId);
+    const user = await User.findById(new ObjectId(userId));
     
     // Crear preferencia en Mercado Pago
+    console.log('🔄 Creando preferencia en MercadoPago...');
     const mpService = getMercadoPagoService();
     const preference = await mpService.createPreference(debt, user);
     
+    console.log('✅ Preferencia creada en MP:', preference.id);
+    
     // Crear registro de pago
     const payment = new Payment({
-      user: userId,
-      debt: debtId,
+      user: new ObjectId(userId),
+      debt: new ObjectId(debtId),
       amount: debt.amount,
       currency: debt.currency,
       status: 'pending',
@@ -77,6 +94,7 @@ const createPaymentPreference = async (req, res) => {
     });
     
     await payment.save();
+    console.log('💾 Pago registrado:', payment._id);
     
     // Marcar la deuda como en proceso
     await debt.markAsProcessing();
@@ -93,11 +111,11 @@ const createPaymentPreference = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error creando preferencia de pago:', error);
+    console.error('❌ Error creando preferencia de pago:', error);
     res.status(500).json({
       status: 'error',
       message: 'Error al crear la preferencia de pago',
-      details: error.message
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -105,19 +123,30 @@ const createPaymentPreference = async (req, res) => {
 // Obtener información de un pago
 const getPayment = async (req, res) => {
   try {
+    console.log('🔍 === OBTENIENDO PAGO ===');
     const { id } = req.params;
     const userId = req.user.userId;
     
-    const payment = await Payment.findOne({ _id: id, user: userId })
-      .populate('debt', 'description amount dueDate status')
-      .lean();
+    console.log('💳 Payment ID:', id);
+    console.log('👤 User ID:', userId);
+    
+    // CORRECCIÓN: Usar new ObjectId()
+    const payment = await Payment.findOne({ 
+      _id: new ObjectId(id), 
+      user: new ObjectId(userId) 
+    })
+    .populate('debt', 'description amount dueDate status')
+    .lean();
     
     if (!payment) {
+      console.error('❌ Pago no encontrado');
       return res.status(404).json({
         status: 'error',
         message: 'Pago no encontrado'
       });
     }
+    
+    console.log('✅ Pago encontrado:', payment._id);
     
     // Si el pago está aprobado, intentar obtener info actualizada de MP
     if (payment.mercadopago.paymentId && payment.status === 'approved') {
@@ -132,8 +161,10 @@ const getPayment = async (req, res) => {
           currentStatus: mpPayment.status,
           statusDetail: mpPayment.status_detail
         };
+        
+        console.log('✅ Información actualizada desde MercadoPago');
       } catch (mpError) {
-        console.error('Error obteniendo info de MP:', mpError);
+        console.error('⚠️ Error obteniendo info de MP:', mpError);
       }
     }
     
@@ -142,10 +173,11 @@ const getPayment = async (req, res) => {
       data: payment
     });
   } catch (error) {
-    console.error('Error obteniendo pago:', error);
+    console.error('❌ Error obteniendo pago:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Error al obtener el pago'
+      message: 'Error al obtener el pago',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -153,16 +185,22 @@ const getPayment = async (req, res) => {
 // Obtener historial de pagos del usuario
 const getPaymentHistory = async (req, res) => {
   try {
+    console.log('📋 === OBTENIENDO HISTORIAL DE PAGOS ===');
     const userId = req.user.userId;
     const { status, debtId, page = 1, limit = 10 } = req.query;
     
-    // Construir filtros
-    const filters = { user: userId };
+    console.log('👤 User ID:', userId);
+    console.log('🔍 Filtros:', { status, debtId, page, limit });
+    
+    // Construir filtros con ObjectId corregido
+    const filters = { user: new ObjectId(userId) }; // CORRECCIÓN: new ObjectId()
     if (status) filters.status = status;
-    if (debtId) filters.debt = debtId;
+    if (debtId) filters.debt = new ObjectId(debtId); // CORRECCIÓN: new ObjectId()
     
     // Paginación
     const skip = (page - 1) * limit;
+    
+    console.log('📊 Filtros construidos:', filters);
     
     // Obtener pagos con paginación
     const [payments, total] = await Promise.all([
@@ -175,8 +213,12 @@ const getPaymentHistory = async (req, res) => {
       Payment.countDocuments(filters)
     ]);
     
-    // Obtener estadísticas
+    console.log(`✅ Encontrados ${payments.length} pagos de ${total} totales`);
+    
+    // Obtener estadísticas usando el método corregido del modelo
     const stats = await Payment.getPaymentStats(userId);
+    
+    console.log('📈 Estadísticas:', stats);
     
     res.json({
       status: 'success',
@@ -192,10 +234,11 @@ const getPaymentHistory = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error obteniendo historial de pagos:', error);
+    console.error('❌ Error obteniendo historial de pagos:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Error al obtener el historial de pagos'
+      message: 'Error al obtener el historial de pagos',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -203,10 +246,14 @@ const getPaymentHistory = async (req, res) => {
 // Verificar estado de pago (callback desde frontend)
 const checkPaymentStatus = async (req, res) => {
   try {
+    console.log('🔍 === VERIFICANDO ESTADO DE PAGO ===');
     const { external_reference, payment_id, status } = req.query;
     const userId = req.user.userId;
     
+    console.log('📋 Parámetros:', { external_reference, payment_id, status });
+    
     if (!external_reference) {
+      console.error('❌ Referencia externa no proporcionada');
       return res.status(400).json({
         status: 'error',
         message: 'Referencia externa no proporcionada'
@@ -216,19 +263,23 @@ const checkPaymentStatus = async (req, res) => {
     // Buscar pago por referencia externa
     const payment = await Payment.findOne({
       'mercadopago.externalReference': external_reference,
-      user: userId
+      user: new ObjectId(userId) // CORRECCIÓN: new ObjectId()
     }).populate('debt');
     
     if (!payment) {
+      console.error('❌ Pago no encontrado para referencia:', external_reference);
       return res.status(404).json({
         status: 'error',
         message: 'Pago no encontrado'
       });
     }
     
+    console.log('✅ Pago encontrado:', payment._id);
+    
     // Si viene con payment_id, actualizar información
     if (payment_id && status === 'approved') {
       try {
+        console.log('🔄 Actualizando desde MercadoPago...');
         const mpService = getMercadoPagoService();
         const mpPayment = await mpService.getPayment(payment_id);
         
@@ -238,9 +289,10 @@ const checkPaymentStatus = async (req, res) => {
         // Si el pago fue aprobado, marcar la deuda como pagada
         if (mpPayment.status === 'approved') {
           await payment.debt.markAsPaid(payment._id);
+          console.log('✅ Deuda marcada como pagada');
         }
       } catch (mpError) {
-        console.error('Error actualizando desde MP:', mpError);
+        console.error('⚠️ Error actualizando desde MP:', mpError);
       }
     }
     
@@ -261,10 +313,11 @@ const checkPaymentStatus = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error verificando estado de pago:', error);
+    console.error('❌ Error verificando estado de pago:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Error al verificar el estado del pago'
+      message: 'Error al verificar el estado del pago',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -272,13 +325,19 @@ const checkPaymentStatus = async (req, res) => {
 // Cancelar un pago pendiente
 const cancelPayment = async (req, res) => {
   try {
+    console.log('❌ === CANCELANDO PAGO ===');
     const { id } = req.params;
     const userId = req.user.userId;
     const { reason } = req.body;
     
-    const payment = await Payment.findOne({ _id: id, user: userId });
+    // CORRECCIÓN: Usar new ObjectId()
+    const payment = await Payment.findOne({ 
+      _id: new ObjectId(id), 
+      user: new ObjectId(userId) 
+    });
     
     if (!payment) {
+      console.error('❌ Pago no encontrado');
       return res.status(404).json({
         status: 'error',
         message: 'Pago no encontrado'
@@ -286,6 +345,7 @@ const cancelPayment = async (req, res) => {
     }
     
     if (!payment.isPending) {
+      console.error('❌ Pago no se puede cancelar, estado:', payment.status);
       return res.status(400).json({
         status: 'error',
         message: 'Solo se pueden cancelar pagos pendientes',
@@ -295,22 +355,25 @@ const cancelPayment = async (req, res) => {
     
     // Cancelar el pago
     await payment.cancel(reason);
+    console.log('✅ Pago cancelado');
     
     // Si hay preferencia, intentar cancelarla en MP
     if (payment.mercadopago.preferenceId) {
       try {
         const mpService = getMercadoPagoService();
         await mpService.cancelPreference(payment.mercadopago.preferenceId);
+        console.log('✅ Preferencia cancelada en MercadoPago');
       } catch (mpError) {
-        console.error('Error cancelando en MP:', mpError);
+        console.error('⚠️ Error cancelando en MP:', mpError);
       }
     }
     
     // Actualizar estado de la deuda
-    const debt = await Debt.findById(payment.debt);
+    const debt = await Debt.findById(new ObjectId(payment.debt)); // CORRECCIÓN: new ObjectId()
     if (debt && debt.status === 'processing') {
       debt.status = 'pending';
       await debt.save();
+      console.log('✅ Estado de deuda actualizado a pending');
     }
     
     res.json({
@@ -318,10 +381,11 @@ const cancelPayment = async (req, res) => {
       message: 'Pago cancelado exitosamente'
     });
   } catch (error) {
-    console.error('Error cancelando pago:', error);
+    console.error('❌ Error cancelando pago:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Error al cancelar el pago'
+      message: 'Error al cancelar el pago',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -329,13 +393,19 @@ const cancelPayment = async (req, res) => {
 // Reintentar un pago fallido
 const retryPayment = async (req, res) => {
   try {
+    console.log('🔄 === REINTENTANDO PAGO ===');
     const { id } = req.params;
     const userId = req.user.userId;
     
-    const payment = await Payment.findOne({ _id: id, user: userId })
-      .populate('debt');
+    // CORRECCIÓN: Usar new ObjectId()
+    const payment = await Payment.findOne({ 
+      _id: new ObjectId(id), 
+      user: new ObjectId(userId) 
+    })
+    .populate('debt');
     
     if (!payment) {
+      console.error('❌ Pago no encontrado');
       return res.status(404).json({
         status: 'error',
         message: 'Pago no encontrado'
@@ -343,6 +413,7 @@ const retryPayment = async (req, res) => {
     }
     
     if (!payment.canBeRetried) {
+      console.error('❌ Pago no puede ser reintentado');
       return res.status(400).json({
         status: 'error',
         message: 'Este pago no puede ser reintentado',
@@ -353,6 +424,7 @@ const retryPayment = async (req, res) => {
     
     // Verificar que la deuda aún pueda ser pagada
     if (!payment.debt.canBePaid()) {
+      console.error('❌ Deuda no puede ser pagada');
       return res.status(400).json({
         status: 'error',
         message: 'La deuda asociada no puede ser pagada',
@@ -361,9 +433,11 @@ const retryPayment = async (req, res) => {
     }
     
     // Crear nueva preferencia
-    const user = await User.findById(userId);
+    const user = await User.findById(new ObjectId(userId)); // CORRECCIÓN: new ObjectId()
     const mpService = getMercadoPagoService();
     const preference = await mpService.createPreference(payment.debt, user);
+    
+    console.log('✅ Nueva preferencia creada:', preference.id);
     
     // Actualizar el pago
     payment.status = 'pending';
@@ -375,6 +449,8 @@ const retryPayment = async (req, res) => {
     // Marcar la deuda como en proceso
     await payment.debt.markAsProcessing();
     
+    console.log('✅ Pago reintentado exitosamente');
+    
     res.json({
       status: 'success',
       message: 'Pago reintentado exitosamente',
@@ -385,10 +461,11 @@ const retryPayment = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error reintentando pago:', error);
+    console.error('❌ Error reintentando pago:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Error al reintentar el pago'
+      message: 'Error al reintentar el pago',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -396,17 +473,20 @@ const retryPayment = async (req, res) => {
 // Solicitar reembolso (solo para pagos aprobados)
 const requestRefund = async (req, res) => {
   try {
+    console.log('💰 === SOLICITANDO REEMBOLSO ===');
     const { id } = req.params;
     const userId = req.user.userId;
     const { reason, amount } = req.body;
     
+    // CORRECCIÓN: Usar new ObjectId()
     const payment = await Payment.findOne({ 
-      _id: id, 
-      user: userId,
+      _id: new ObjectId(id), 
+      user: new ObjectId(userId),
       status: 'approved'
     });
     
     if (!payment) {
+      console.error('❌ Pago aprobado no encontrado');
       return res.status(404).json({
         status: 'error',
         message: 'Pago aprobado no encontrado'
@@ -414,6 +494,7 @@ const requestRefund = async (req, res) => {
     }
     
     if (!payment.mercadopago.paymentId) {
+      console.error('❌ Sin ID de pago de MercadoPago');
       return res.status(400).json({
         status: 'error',
         message: 'No se puede procesar el reembolso sin ID de pago de MP'
@@ -427,6 +508,8 @@ const requestRefund = async (req, res) => {
       amount
     );
     
+    console.log('✅ Reembolso creado en MercadoPago:', refund.id);
+    
     // Actualizar estado del pago
     payment.status = 'refunded';
     payment.statusHistory.push({
@@ -439,10 +522,11 @@ const requestRefund = async (req, res) => {
     
     // Actualizar estado de la deuda si es reembolso total
     if (!amount || amount >= payment.amount) {
-      const debt = await Debt.findById(payment.debt);
+      const debt = await Debt.findById(new ObjectId(payment.debt)); // CORRECCIÓN: new ObjectId()
       if (debt) {
         debt.status = 'pending';
         await debt.save();
+        console.log('✅ Deuda marcada como pending tras reembolso total');
       }
     }
     
@@ -456,11 +540,11 @@ const requestRefund = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error procesando reembolso:', error);
+    console.error('❌ Error procesando reembolso:', error);
     res.status(500).json({
       status: 'error',
       message: 'Error al procesar el reembolso',
-      details: error.message
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

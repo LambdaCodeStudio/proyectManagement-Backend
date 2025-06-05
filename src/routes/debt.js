@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { body, param, query, validationResult } = require('express-validator');
 const auth = require('../middleware/auth');
+const { isAdmin, isOwnerOrAdmin } = require('../middleware/roleAuth');
 const {
   getDebts,
   getDebtById,
@@ -98,17 +99,16 @@ router.post('/:id/reminder', auth, validateDebtId, sendDebtReminder);
 
 // Rutas de administración (requieren permisos especiales)
 
-// Middleware para verificar si es admin
-const isAdmin = (req, res, next) => {
-  // Aquí implementar lógica de verificación de admin
-  // Por ahora, solo verificamos que esté autenticado
-  if (!req.user) {
-    return res.status(403).json({
-      status: 'error',
-      message: 'Acceso denegado: se requieren permisos de administrador'
-    });
+// Función para obtener el ID del propietario de una deuda
+const getDebtOwnerId = async (req) => {
+  try {
+    const Debt = require('../models/debt');
+    const debt = await Debt.findById(req.params.id);
+    return debt ? debt.user : null;
+  } catch (error) {
+    console.error('Error al obtener propietario de deuda:', error);
+    return null;
   }
-  next();
 };
 
 // Crear una nueva deuda (solo admin)
@@ -118,7 +118,7 @@ router.post('/', auth, isAdmin, validateCreateDebt, createDebt);
 router.put('/:id', auth, isAdmin, validateUpdateDebt, updateDebt);
 
 // Cancelar una deuda (admin o usuario dueño)
-router.post('/:id/cancel', auth, validateDebtId, [
+router.post('/:id/cancel', auth, isOwnerOrAdmin(getDebtOwnerId), validateDebtId, [
   body('reason')
     .optional()
     .isString()
